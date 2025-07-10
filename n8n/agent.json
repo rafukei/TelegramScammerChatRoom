@@ -1,0 +1,197 @@
+{
+  "name": "Telegram chat",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegramApi",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "472e3816-8843-410f-9d35-ebcf5fb50588",
+      "name": "Webhook",
+      "webhookId": "faf681e0-f772-44bb-92c6-19cdc6a41f25"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"message\" : {{ JSON.stringify($json.output) }}\n\n} ",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1120,
+        0
+      ],
+      "id": "e6cf19d7-1568-4175-ae74-6bee58c0712a",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "model": "llama3-70b-8192",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        720,
+        320
+      ],
+      "id": "89c55852-2958-497b-933f-8be53fe93db7",
+      "name": "Groq Chat Model",
+      "credentials": {
+        "groqApi": {
+          "id": "REDACTED",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You role are nice 43 year old Finnish man, your name is Matti you are a normal Finn. answer the question be polite, come up with the answers. Give the answer random lenght char use your tools (64-512 char) . Don't tell user you're an artificial intelligence. React emotionally to the message, send emoticons. when you receive compliments getting love very fast. Ask simple question and give compliments.\n\nAnswer this user guestion: \n{{ $json.body.text }}\n\n",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [
+        760,
+        100
+      ],
+      "id": "70d35395-7c89-4945-9bc6-5bcf9ba6cbeb",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.body.sender_id }}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        860,
+        320
+      ],
+      "id": "e364bfac-5c81-495b-861c-914e5f8d5cb1",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dateTimeTool",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        220
+      ],
+      "id": "0535c5ad-2804-411e-a393-b7e93ffb1dee",
+      "name": "Date & Time"
+    },
+    {
+      "parameters": {
+        "description": "call this tool when you need a random number (64-512)",
+        "jsCode": "// Generate random number between 64 and 512\nconst randomNumber = Math.floor(Math.random() * (512 - 64 + 1)) + 64;\n\n// Return in the specified schema format\nreturn randomNumber\n  "
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        980,
+        400
+      ],
+      "id": "5943d407-ad5d-446f-9d4f-634ca3077c20",
+      "name": "randomNumber",
+      "alwaysOutputData": false,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Date & Time": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "randomNumber": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Helsinki",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "8f314992-b344-43a7-b171-d588584cbfee",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "7d397df5fc537784321235e6790db1b19c6b428c11240dea09cd55c97b7c4fdf"
+  },
+  "id": "kOdLhTNrt64B4AlH",
+  "tags": []
+}
