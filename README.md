@@ -22,5 +22,7 @@ Install all python requirements
 ``` bash
 pip install requirements.txt
 ```
+# n8n
+Install json file you n8n server
 
 
