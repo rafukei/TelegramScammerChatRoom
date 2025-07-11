@@ -1,6 +1,6 @@
 # TelegramScammerChatRoom
 This program wastes the time of scammers talking to a chat robot, so they don't have time to scam as many people. This is the equivalent of Telegram messages coming to your telegram from an unknown number. Uses N8N and python application
-# How greate telegram password
+# How create telegram password
 Obtaining api_id
 In order to obtain an API id and develop your own application using the Telegram API you need to do the following:
  - Sign up for Telegram using an official application.
