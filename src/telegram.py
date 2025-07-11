@@ -14,7 +14,7 @@ API_ID = int(os.getenv('API_ID'))
 API_HASH = os.getenv('API_HASH')
 REST_URL = os.getenv('REST_URL')
 PHONE = os.getenv('PHONE')
-
+NAME = os.getenv('NAME')
 # Alustetaan Telegram-client
 client = TelegramClient('bot_session', API_ID, API_HASH)
 
@@ -87,7 +87,8 @@ async def handle_message(event):
             'sender_id': event.sender_id,
             'phone': phone_number,
             'text': event.raw_text,
-            'timestamp': event.message.date.isoformat()
+            'timestamp': event.message.date.isoformat(),
+            'name': NAME
         }
 
         # Tallennetaan JSON-tiedostoon
