@@ -3,6 +3,7 @@ import json
 import signal
 import asyncio
 import random
+from collections import defaultdict
 from dotenv import load_dotenv
 from telethon import TelegramClient, events, functions
 from telethon.tl.types import User
@@ -15,6 +16,7 @@ API_HASH = os.getenv('API_HASH')
 REST_URL = os.getenv('REST_URL')
 PHONE = os.getenv('PHONE')
 NAME = os.getenv('NAME')
+
 # Alustetaan Telegram-client
 client = TelegramClient('bot_session', API_ID, API_HASH)
 
@@ -22,6 +24,11 @@ client = TelegramClient('bot_session', API_ID, API_HASH)
 contacts_cache = None
 contacts_cache_time = 0
 CACHE_EXPIRE_TIME = 3600  # 1 tunti sekunteina
+
+# Puskuri viesteille ennen käsittelyä
+message_buffer = defaultdict(list)
+delay_tasks = {}
+read_tasks = {}
 
 async def shutdown(signal, loop):
     """Siisti sulkeminen"""
@@ -62,32 +69,50 @@ async def is_contact(user_id):
         print(f"Virhe kontaktien haussa: {e}")
         return False
 
-@client.on(events.NewMessage)
-async def handle_message(event):
+def calculate_delay_based_on_message_length(text):
+    """Laskee viiveen viestin pituuden perusteella"""
+    base_delay = random.randint(60, 180)  # Perusviive 1-3 minuuttia
+    length_factor = len(text) / 50  # 50 merkkiä = 1x kerroin
+    length_delay = min(length_factor * 15, 60)  # Enintään 60 sekuntia lisää
+    
+    total_delay = base_delay + length_delay
+    return int(total_delay)
+
+async def mark_messages_as_read(user_id, messages):
+    """Merkitsee viestit luetuksi"""
     try:
-        # Tarkista onko lähettäjä kontaktissa
-        sender = await event.get_sender()
-        if await is_contact(sender.id):
-            print(f"Viesti kontaktilta {sender.id}, ei vastata.")
+        for event in messages:
+            await client(functions.messages.ReadHistoryRequest(
+                peer=await event.get_input_chat(),
+                max_id=event.message.id
+            ))
+        print(f"Viestit merkitty luetuksi käyttäjälle {user_id}")
+    except Exception as e:
+        print(f"Virhe viestien lukemisessa käyttäjälle {user_id}: {e}")
+
+async def process_buffered_messages(user_id):
+    """Käsittelee puskuroidut viestit käyttäjälle ja lähettää vastauksen"""
+    try:
+        if user_id not in message_buffer or not message_buffer[user_id]:
             return
-        read_delay = random.randint(5, 25)
-        print(f"Odota {read_delay} sekuntia ennen viestin lukemista...")
-        await asyncio.sleep(read_delay)
-        # Merkitse viesti luetuksi
-        await client(functions.messages.ReadHistoryRequest(
-            peer=await event.get_input_chat(),
-            max_id=event.message.id
-        ))
+            
+        # Käsitellään kaikki puskuroidut viestit
+        buffered_messages = message_buffer[user_id].copy()
+        print(f"Lähetetään vastaus {len(buffered_messages)} viestille käyttäjältä {user_id}")
         
-        # Haetaan käyttäjän puhelinnumero
+        # Yhdistetään kaikkien viestien tekstit yhdeksi viestiksi
+        combined_text = " ".join([event.raw_text for event in buffered_messages])
+        
+        # Haetaan käyttäjän puhelinnumero (ensimmäisen viestin lähettäjältä)
+        sender = await buffered_messages[0].get_sender()
         phone_number = await get_user_phone(sender)
         
         # Viestin tiedot dictionary-muodossa
         message_data = {
-            'sender_id': event.sender_id,
+            'sender_id': user_id,
             'phone': phone_number,
-            'text': event.raw_text,
-            'timestamp': event.message.date.isoformat(),
+            'text': combined_text,
+            'timestamp': buffered_messages[-1].message.date.isoformat(),  # Viimeisen viestin aika
             'name': NAME
         }
 
@@ -102,21 +127,110 @@ async def handle_message(event):
             response.raise_for_status()
             response_data = response.json()
             
-            # Lisätään satunnainen viive (15-60 sekuntia)
-            delay = random.randint(15, 60)
-            print(f"Odota {delay} sekuntia ennen vastauksen lähetystä...")
-            await asyncio.sleep(delay)
-            
             # Lähetetään vastaus takaisin käyttäjälle
             reply_msg = f" {response_data.get('message', 'Ei vastausta')}"
+            
             # Satunnainen valinta lähetetäänkö vastaus suorana vastauksena vai uutena viestinä
             if random.choice([True, False]):  # 50% todennäköisyys kummallekin
-                await event.reply(reply_msg)  # Vastaa suoraan viestiin
+                await buffered_messages[-1].reply(reply_msg)  # Vastaa viimeiseen viestiin
             else:
                 # Lähetä uutena viestinä samalle chatille
-                await client.send_message(event.chat_id, reply_msg)
+                await client.send_message(buffered_messages[0].chat_id, reply_msg)
+                
+            print(f"Vastaus lähetetty käyttäjälle {user_id}")
+                
         except requests.exceptions.RequestException as e:
             print(f"Virhe REST-pyynnössä: {e}")
+        
+        # Poista käsitellyt viestit puskurista
+        message_buffer[user_id] = message_buffer[user_id][len(buffered_messages):]
+        
+    except Exception as e:
+        print(f"Virhe vastauksen lähetyksessä käyttäjälle {user_id}: {e}")
+
+async def start_delay_timer(user_id):
+    """Käynnistää viiveen ennen viestien käsittelyä"""
+    try:
+        if user_id not in message_buffer or not message_buffer[user_id]:
+            return
+            
+        # Lasketaan viive viestien pituuden perusteella
+        combined_text = " ".join([event.raw_text for event in message_buffer[user_id]])
+        total_delay = calculate_delay_based_on_message_length(combined_text)
+        read_delay = int(total_delay * 0.7)  # 70% viiveestä merkitään luetuksi
+        response_delay = total_delay  # Koko viive vastausta varten
+        
+        print(f"Odota {read_delay}s lukemiseen ja {response_delay}s vastaamiseen käyttäjälle {user_id}...")
+        
+        # 1. Odota 70% viivettä ja merkitse viestit luetuksi
+        remaining_read_delay = read_delay
+        check_interval = 3  # Tarkista uudet viestit joka 3 sekunti
+        
+        while remaining_read_delay > 0:
+            await asyncio.sleep(min(check_interval, remaining_read_delay))
+            remaining_read_delay -= check_interval
+            
+            # Jos uusia viestejä on tullut, keskeytä nykyinen viive ja laske uusi
+            current_buffer_size = len(message_buffer[user_id])
+            if current_buffer_size > 0:  # Uusia viestejä on tullut
+                new_combined_text = " ".join([event.raw_text for event in message_buffer[user_id]])
+                new_total_delay = calculate_delay_based_on_message_length(new_combined_text)
+                new_read_delay = int(new_total_delay * 0.7)
+                
+                # Jos uusi viive on pidempi, jatka odotusta uudella viiveellä
+                if new_total_delay > total_delay:
+                    print(f"Uusia viestejä tullut, jatketaan odotusta {new_total_delay}s...")
+                    total_delay = new_total_delay
+                    read_delay = new_read_delay
+                    response_delay = new_total_delay
+                    remaining_read_delay = read_delay
+                else:
+                    print(f"Uusia viestejä tullut, jatketaan nykyistä odotusta...")
+        
+        # 2. Merkitse viestit luetuksi (70% kohdalla)
+        buffered_messages = message_buffer[user_id].copy()
+        await mark_messages_as_read(user_id, buffered_messages)
+        
+        # 3. Odota loput viivettä vastausta varten
+        remaining_response_delay = response_delay - read_delay
+        if remaining_response_delay > 0:
+            print(f"Odota {remaining_response_delay}s ennen vastaamista...")
+            await asyncio.sleep(remaining_response_delay)
+        
+        # 4. Lähetä vastaus
+        await process_buffered_messages(user_id)
+        
+    except asyncio.CancelledError:
+        print(f"Viive keskeytetty käyttäjälle {user_id}")
+    except Exception as e:
+        print(f"Virhe viiveen aikana käyttäjälle {user_id}: {e}")
+
+@client.on(events.NewMessage)
+async def handle_message(event):
+    try:
+        # Tarkista onko lähettäjä kontaktissa
+        sender = await event.get_sender()
+        if await is_contact(sender.id):
+            print(f"Viesti kontaktilta {sender.id}, ei vastata.")
+            return
+        
+        # Lisää viesti puskuriin
+        user_id = sender.id
+        message_buffer[user_id].append(event)
+        buffer_size = len(message_buffer[user_id])
+        print(f"Viesti lisätty puskuriin käyttäjälle {user_id}, puskurin koko: {buffer_size}")
+        
+        # Keskeytä mahdollinen käynnissä oleva viive ja käynnistä uusi
+        if user_id in delay_tasks and not delay_tasks[user_id].done():
+            delay_tasks[user_id].cancel()
+            try:
+                await delay_tasks[user_id]
+            except asyncio.CancelledError:
+                pass
+        
+        # Käynnistä uusi viive
+        delay_tasks[user_id] = asyncio.create_task(start_delay_timer(user_id))
+                
     except Exception as e:
         print(f"Virhe viestin käsittelyssä: {e}")
 
